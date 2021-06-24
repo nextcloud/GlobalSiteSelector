@@ -23,13 +23,13 @@
 namespace OCA\GlobalSiteSelector;
 
 use Exception;
+use Firebase\JWT\JWT;
 use OCA\GlobalSiteSelector\AppInfo\Application;
 use OCP\Accounts\IAccountManager;
 use OCP\Http\Client\IClientService;
 use OCP\IConfig;
 use OCP\IUser;
 use OCP\IUserManager;
-use Firebase\JWT\JWT;
 use Psr\Log\LoggerInterface;
 
 class Slave {
@@ -111,7 +111,7 @@ class Slave {
 		$user = $this->userManager->get($uid);
 		$userData = [];
 		if ($user !== null) {
-			$userData[$user->getCloudId()] = $this->getAccountData($user);
+			$userData[$this->getUserCloudId($user)] = $this->getAccountData($user);
 			$this->addUsers($userData);
 		}
 	}
@@ -134,7 +134,7 @@ class Slave {
 		);
 
 		$userData = [];
-		$userData[$user->getCloudId()] = $this->getAccountData($user);
+		$userData[$this->getUserCloudId($user)] = $this->getAccountData($user);
 		$this->addUsers($userData);
 	}
 
@@ -149,7 +149,7 @@ class Slave {
 		$uid = $params['uid'];
 		$user = $this->userManager->get($uid);
 		if ($user !== null) {
-			self::$toRemove[$uid] = $user->getCloudId();
+			self::$toRemove[$uid] = $this->getUserCloudId($user);
 		}
 	}
 
@@ -197,7 +197,7 @@ class Slave {
 				foreach ($users as $uid) {
 					$user = $this->userManager->get($uid);
 					if ($user !== null) {
-						$usersData[$user->getCloudId()] = $this->getAccountData($user);
+						$usersData[$this->getUserCloudId($user)] = $this->getAccountData($user);
 					}
 				}
 				$offset += $limit;
@@ -338,4 +338,20 @@ class Slave {
 		header('Location: ' . $redirectUrl);
 		die();
 	}
+
+
+	/**
+	 * @param IUser $user
+	 *
+	 * @return string
+	 */
+	private function getUserCloudId(IUser $user): string {
+		if ($this->config->getsystemValue('gss.custom_cloud_id') !== '') {
+			return $user->getUID() . '@' . $this->config->getsystemValue('gss.force_cloud_id');
+		} else {
+			return $user->getCloudId();
+		}
+	}
+
 }
+
