@@ -98,8 +98,8 @@ class Lookup {
 			}
 
 		} catch (\Exception $e) {
-			// Nothing to do, we just return a empty string below as a indicator
-			// that nothing was found
+			$emsg = var_export($e, true);
+			$this->logger->debug('exception caught querying lookup server: ' . $emsg);
 		}
 
 		$this->logger->debug('serach: location for ' . $uid . ' is ' . $result);

@@ -137,10 +137,12 @@ class Master {
 			// we only send the formatted user data to the slave
 			$options['userData'] = $options['userData']['formatted'];
 		} else {
-			$this->logger->debug('handleLoginRequest: backend is not SAML');
+			$this->logger->debug('handleLoginRequest: backend is Manual');
 
 			$uid = $param['uid'];
 			$password = isset($param['password']) ? $param['password'] : '';
+			// quick fix, makes for a limited choice of idpParameter
+			$discoveryData['manual'] = [ "uid" => $uid ];
 		}
 
 		$this->logger->debug('handleLoginRequest: uid is: ' . $uid);

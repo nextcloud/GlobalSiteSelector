@@ -32,10 +32,10 @@ use OCP\ILogger;
  * Therefore you have to define to values in the config.php
  *
  * 'gss.discovery.manual.mapping.file' => '/path/to/json-file'
- * 'gss.discovery.manual.mapping.parameter' => 'idp-parameter'
  *
  * And then there is another optional parameter if you want to use regular expressions:
  *
+ * 'gss.discovery.manual.mapping.parameter' => 'uid'
  * 'gss.discovery.manual.mapping.regex' => true
  *
  * @package OCA\GlobalSiteSelector\UserDiscoveryModules
@@ -57,7 +57,7 @@ class ManualUserMapping implements IUserDiscoveryModule {
 	 * @param IConfig $config
 	 */
 	public function __construct(IConfig $config, ILogger $logger) {
-		$this->idpParameter = $config->getSystemValue('gss.discovery.manual.mapping.parameter', '');
+		$this->idpParameter = $config->getSystemValue('gss.discovery.manual.mapping.parameter', 'uid');
 		$this->file = $config->getSystemValue('gss.discovery.manual.mapping.file', '');
 		$this->useRegularExpressions = $config->getSystemValue('gss.discovery.manual.mapping.regex', false);
 		$this->logger = $logger;
@@ -134,11 +134,13 @@ class ManualUserMapping implements IUserDiscoveryModule {
 	 */
 	private function getKey($data) {
 		$key = '';
-		if (!empty($this->idpParameter) && isset($data['saml'][$this->idpParameter][0])) {
-			$key = $data['saml'][$this->idpParameter][0];
+		if (!empty($this->idpParameter) && isset($data['manual'][$this->idpParameter])) {
+			$key = $data['manual'][$this->idpParameter];
 			$this->logger->debug('Found idpPrameter ' . $this->idpParameter . ' with value "' . $key . '"');
 		} else {
-			$this->logger->debug('Could not find idpParamter: ' . $this->idpParameter);
+			$debugdata = var_export($data['manual'], true);
+			$this->logger->debug('Could not find idpParamter: ' . $this->idpParameter
+					    . ' in user data: ' . $debugdata);
 		}
 
 		return $this->normalizeKey($key);
