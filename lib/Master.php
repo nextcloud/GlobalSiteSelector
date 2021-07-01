@@ -103,7 +103,7 @@ class Master {
 	 * @param array $param
 	 * @throws HintException
 	 */
-	public function handleLoginRequest($param) {
+	public function handleLoginRequest(array $param): void {
 		$this->logger->debug( 'start handle login request');
 
 		// if there is a valid JWT it is a internal GSS request between master and slave

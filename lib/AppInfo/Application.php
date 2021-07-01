@@ -1,8 +1,13 @@
 <?php
+
+declare(strict_types=1);
+
+
 /**
  * @copyright Copyright (c) 2017 Bjoern Schiessle <bjoern@schiessle.org>
  *
  * @license GNU AGPL version 3 or any later version
+ * @author Maxence Lange <maxence@artificial-owl.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -23,96 +28,168 @@
 namespace OCA\GlobalSiteSelector\AppInfo;
 
 
+use Closure;
+use Exception;
+use OC;
+use OC_User;
 use OCA\GlobalSiteSelector\GlobalSiteSelector;
-use OCA\GlobalSiteSelector\Master;
+use OCA\GlobalSiteSelector\Listeners\DeletingUser;
+use OCA\GlobalSiteSelector\Listeners\UserCreated;
+use OCA\GlobalSiteSelector\Listeners\UserDeleted;
+use OCA\GlobalSiteSelector\Listeners\UserLoggedOut;
+use OCA\GlobalSiteSelector\Listeners\UserLoggingIn;
 use OCA\GlobalSiteSelector\PublicCapabilities;
 use OCA\GlobalSiteSelector\Slave;
 use OCA\GlobalSiteSelector\UserBackend;
 use OCP\AppFramework\App;
-use OCP\AppFramework\IAppContainer;
-use OCP\Util;
+use OCP\AppFramework\Bootstrap\IBootContext;
+use OCP\AppFramework\Bootstrap\IBootstrap;
+use OCP\AppFramework\Bootstrap\IRegistrationContext;
+use OCP\IDBConnection;
+use OCP\IGroupManager;
+use OCP\IRequest;
+use OCP\IServerContainer;
+use OCP\ISession;
+use OCP\IUser;
+use OCP\IUserManager;
+use OCP\IUserSession;
+use OCP\User\Events\BeforeUserDeletedEvent;
+use OCP\User\Events\BeforeUserLoggedInEvent;
+use OCP\User\Events\UserCreatedEvent;
+use OCP\User\Events\UserDeletedEvent;
+use OCP\User\Events\UserLoggedOutEvent;
 use Symfony\Component\EventDispatcher\GenericEvent;
+use Throwable;
 
-class Application extends App {
+
+require_once __DIR__ . '/../../vendor/autoload.php';
+
+
+/**
+ * Class Application
+ *
+ * @package OCA\GlobalSiteSelector\AppInfo
+ */
+class Application extends App implements IBootstrap {
 
 	public const APP_ID = 'globalsiteselector';
 
 	public function __construct(array $urlParams = array()) {
 		parent::__construct(self::APP_ID, $urlParams);
 
-		$container = $this->getContainer();
-
-		$gss = $container->query(GlobalSiteSelector::class);
-		$mode = $gss->getMode();
-
-		if ($mode === 'master') {
-			$this->registerMasterHooks($container);
-		} else {
-			$this->registerSlaveHooks($container);
-			$this->registerUserBackendForSlave($container);
-		}
-
-		$container->registerCapability(PublicCapabilities::class);
-
 		//TODO: Add proper CSP exception for NC://
 	}
 
-	/**
-	 * register hooks for the portal if it operates as a master which redirects
-	 * users to their login server
-	 *
-	 * @param IAppContainer $c
-	 */
-	private function registerMasterHooks(IAppContainer $c) {
-		$master = $c->query(Master::class);
-		Util::connectHook('OC_User', 'pre_login', $master, 'handleLoginRequest');
-	}
 
 	/**
-	 * register hooks for the portal if it operates as a slave
-	 *
-	 * @param IAppContainer $c
+	 * @param IRegistrationContext $context
 	 */
-	private function registerSlaveHooks(IAppContainer $c) {
-		/** @var Slave $slave */
-		$slave = $c->query(Slave::class);
+	public function register(IRegistrationContext $context): void {
+		$context->registerCapability(PublicCapabilities::class);
 
-		Util::connectHook('OC_User', 'post_createUser',	$slave, 'createUser');
-		Util::connectHook('OC_User', 'pre_deleteUser',	$slave, 'preDeleteUser');
-		Util::connectHook('OC_User', 'post_deleteUser',	$slave, 'deleteUser');
+		// event on master
+		$context->registerEventListener(BeforeUserLoggedInEvent::class, UserLoggingIn::class);
 
-		$dispatcher = \OC::$server->getEventDispatcher();
-		$dispatcher->addListener('OC\AccountManager::userUpdated', function(GenericEvent $event) use ($slave) {
-			/** @var \OCP\IUser $user */
+		// events on slave
+		$context->registerEventListener(UserCreatedEvent::class, UserCreated::class);
+		$context->registerEventListener(BeforeUserDeletedEvent::class, DeletingUser::class);
+		$context->registerEventListener(UserDeletedEvent::class, UserDeleted::class);
+		$context->registerEventListener(UserLoggedOutEvent::class, UserLoggedOut::class);
+
+		// It seems that AccountManager use deprecated dispatcher, let's use a deprecated listener
+		$dispatcher = OC::$server->getEventDispatcher();
+		$dispatcher->addListener(
+			'OC\AccountManager::userUpdated', function(GenericEvent $event) {
+			/** @var IUser $user */
 			$user = $event->getSubject();
+			$slave = OC::$server->get(Slave::class);
 			$slave->updateUser($user);
-		});
-
-		\OC::$server->getUserSession()->listen('\OC\User', 'postLogout', function () use ($slave) {
-			$slave->handleLogoutRequest();
-		});
+		}
+		);
 	}
+
+
+	/**
+	 * @param IBootContext $context
+	 *
+	 * @throws Throwable
+	 */
+	public function boot(IBootContext $context): void {
+		$context->injectFn(Closure::fromCallable([$this, 'registerUserBackendForSlave']));
+		$context->injectFn(Closure::fromCallable([$this, 'redirectToMasterLogin']));
+	}
+
 
 	/**
 	 * Register the Global Scale User Backend if we run in slave mode
 	 *
-	 * @param IAppContainer $container
+	 * @param IServerContainer $container
 	 */
-	private function registerUserBackendForSlave(IAppContainer $container) {
+	private function registerUserBackendForSlave(IServerContainer $container) {
+		$userManager = $container->get(IUserManager::class);
+
 		// make sure that we register the backend only once
-		$backends = \OC::$server->getUserManager()->getBackends();
+		$backends = $userManager->getBackends();
 		foreach ($backends as $backend) {
 			if ($backend instanceof UserBackend) {
 				return;
 			}
 		}
+
 		$userBackend = new UserBackend(
-			$container->getServer()->getDatabaseConnection(),
-			$container->getServer()->getSession(),
-			$container->getServer()->getGroupManager(),
-			$container->getServer()->getUserManager()
+			$container->get(IDBConnection::class),
+			$container->get(ISession::class),
+			$container->get(IGroupManager::class),
+			$userManager
 		);
-		$userBackend->registerBackends(\OC::$server->getUserManager()->getBackends());
-		\OC_User::useBackend($userBackend);
+		$userBackend->registerBackends($userManager->getBackends());
+		OC_User::useBackend($userBackend);
 	}
+
+
+	/**
+	 * Register the Global Scale User Backend if we run in slave mode
+	 *
+	 * @param IServerContainer $container
+	 */
+	private function redirectToMasterLogin(IServerContainer $container) {
+		if (OC::$CLI) {
+			return;
+		}
+
+		/** @var GlobalSiteSelector $gss */
+		$gss = $container->get(GlobalSiteSelector::class);
+		if (!$gss->isSlave()) {
+			return;
+		}
+
+		try {
+			$masterUrl = $gss->getMasterUrl();
+
+			/** @var IUserSession $userSession */
+			$userSession = $container->get(IUserSession::class);
+			/** @var IRequest $request */
+			$request = $container->get(IRequest::class);
+
+			if ($userSession->isLoggedIn() || $request->getPathInfo() !== '/login') {
+				return;
+			}
+
+			$params = $request->getParams();
+			if (isset($params['direct'])) {
+				return;
+			}
+
+			if (isset($params['redirect_url'])) {
+				$masterUrl .= $params['redirect_url'];
+			}
+
+			header('Location: ' . $masterUrl);
+			exit();
+		} catch (Exception $e) {
+			return;
+		}
+	}
+
 }
+

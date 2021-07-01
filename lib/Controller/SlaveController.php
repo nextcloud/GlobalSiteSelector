@@ -25,6 +25,7 @@ namespace OCA\GlobalSiteSelector\Controller;
 
 use Firebase\JWT\ExpiredException;
 use Firebase\JWT\JWT;
+use OCA\GlobalSiteSelector\Exceptions\MasterUrlException;
 use OCA\GlobalSiteSelector\GlobalSiteSelector;
 use OCA\GlobalSiteSelector\TokenHandler;
 use OCA\GlobalSiteSelector\UserBackend;
@@ -125,10 +126,13 @@ class SlaveController extends OCSController {
 	 * @return RedirectResponse
 	 */
 	public function autoLogin($jwt) {
+		try {
+			$masterUrl = $this->gss->getMasterUrl();
+		} catch (MasterUrlException $e) {
+			return new RedirectResponse('');
+		}
 
-		$masterUrl = $this->gss->getMasterUrl();
-
-		if($this->gss->getMode() === 'master') {
+		if ($this->gss->isMaster()) {
 			return new RedirectResponse($masterUrl);
 		}
 
