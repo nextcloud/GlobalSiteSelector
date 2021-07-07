@@ -347,7 +347,7 @@ class Slave {
 	 */
 	private function getUserCloudId(IUser $user): string {
 		if ($this->config->getsystemValue('gss.custom_cloud_id') !== '') {
-			return $user->getUID() . '@' . $this->config->getsystemValue('gss.force_cloud_id');
+			return $user->getUID() . '@' . $this->config->getsystemValue('gss.custom_cloud_id');
 		} else {
 			return $user->getCloudId();
 		}
